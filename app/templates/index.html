@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block content %}
+
+<section class="card">
+  <h2>参考序列</h2>
+  {% if reference %}
+    <dl class="meta">
+      <dt>版本 ID</dt><dd>#{{ reference.id }}</dd>
+      <dt>长度</dt><dd>{{ reference.length }} bp</dd>
+      <dt>上传时间</dt><dd>{{ reference.uploaded_at }} UTC</dd>
+    </dl>
+    <p class="seq" title="参考序列预览">
+      {{ reference.sequence[:120] }}{% if reference.length > 120 %}…（仅显示前 120 bp）{% endif %}
+    </p>
+    <p class="hint">更换参考会立即按新序列重新校验全部样本：REF 不符或归一化后重复的样本将标记为「待重传」并从汇总剔除。</p>
+  {% else %}
+    <p class="empty">尚未上传参考序列，请先上传一条仅含 ACGT 的参考序列（支持纯文本或单记录 FASTA）。</p>
+  {% endif %}
+  <form method="post" action="{{ url_for('upload_reference') }}" enctype="multipart/form-data" class="upload">
+    <input type="file" name="reference" accept=".fa,.fasta,.txt,.seq,text/plain" required>
+    <button type="submit" class="primary">上传 / 更换参考</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>上传样本 TSV</h2>
+  <p class="hint">列：<code>POS（从 1 计数）&nbsp;REF&nbsp;ALT&nbsp;GT</code>，Tab 分隔，可带表头。同名样本重传会替换旧版。</p>
+  <form method="post" action="{{ url_for('upload_sample') }}" enctype="multipart/form-data" class="upload">
+    <input type="text" name="name" placeholder="样本名称，如 S1" maxlength="128" required>
+    <input type="file" name="sample" accept=".tsv,.txt,text/tab-separated-values" required>
+    <button type="submit" class="primary">上传样本</button>
+  </form>
+</section>
+
+{% if reference %}
+<section class="card">
+  <h2>样本列表（当前参考 #{{ reference.id }}）</h2>
+  <p class="hint">
+    有效样本 {{ stats.valid }} 个 · 待重传 {{ stats.needs_reupload }} 个
+    {% if stats.stale %}· <strong>{{ stats.stale }} 个样本属于历史参考，不参与当前汇总</strong>{% endif %}
+  </p>
+  {% if samples %}
+  <table>
+    <thead><tr><th>样本</th><th>状态</th><th>变异数</th><th>上传时间</th><th>说明</th><th></th></tr></thead>
+    <tbody>
+    {% for s in samples %}
+      <tr class="{{ 'row-warn' if s.status == 'NEEDS_REUPLOAD' or s.reference_id != reference.id }}">
+        <td>{{ s.name }}</td>
+        <td>
+          {% if s.reference_id != reference.id %}
+            <span class="tag tag-stale">历史参考 #{{ s.reference_id }}</span>
+          {% elif s.status == 'VALID' %}
+            <span class="tag tag-ok">有效</span>
+          {% else %}
+            <span class="tag tag-bad">待重传</span>
+          {% endif %}
+        </td>
+        <td>{{ s.variant_count }}</td>
+        <td>{{ s.uploaded_at }}</td>
+        <td class="err">{{ s.error or '' }}</td>
+        <td>
+          <form method="post" action="{{ url_for('delete_sample', sample_id=s.id) }}"
+                onsubmit="return confirm('删除样本「{{ s.name }}」？');">
+            <button type="submit" class="linklike">删除</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="empty">还没有样本。</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>规范变异汇总</h2>
+  <p class="hint">按参考左对齐去冗余后的规范坐标；仅统计当前参考下有效样本，点击变异查看各样本基因型与原始位点。</p>
+  {% if variants %}
+  <table>
+    <thead><tr><th>规范位点</th><th>REF</th><th>ALT</th><th>类型</th><th>检出样本数</th><th></th></tr></thead>
+    <tbody>
+    {% for v in variants %}
+      <tr>
+        <td>{{ v.pos }}</td>
+        <td class="mono">{{ v.ref }}</td>
+        <td class="mono">{{ v.alt }}</td>
+        <td><span class="tag tag-kind">{{ v.kind }}</span></td>
+        <td><strong>{{ v.n_samples }}</strong></td>
+        <td><a class="detail-link"
+               href="{{ url_for('variant_detail', pos=v.pos, alleles=v.ref ~ '>' ~ v.alt) }}">详情 →</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="empty">当前没有可汇总的变异。</p>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

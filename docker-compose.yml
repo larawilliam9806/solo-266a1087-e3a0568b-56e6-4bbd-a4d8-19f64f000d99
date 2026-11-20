@@ -1,0 +1,21 @@
+services:
+  web:
+    build: .
+    image: variant-normalizer:latest
+    container_name: variant-normalizer
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_PATH: /data/variants.db
+      SECRET_KEY: change-me-in-production
+    volumes:
+      - variant-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  variant-data:

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}变异 {{ variant.pos }}:{{ variant.ref }}&gt;{{ variant.alt }}{% endblock %}
+{% block content %}
+<section class="card">
+  <p><a href="{{ url_for('index') }}">← 返回汇总</a></p>
+  <h2>规范变异 {{ variant.pos }} : {{ variant.ref }} → {{ variant.alt }}</h2>
+  <p class="hint">共 {{ variant.rows|length }} 个样本检出；下表保留每份 TSV 中书写的原始位点与等位基因。</p>
+  <table>
+    <thead>
+      <tr><th>样本</th><th>基因型 (GT)</th><th>原始 POS</th><th>原始 REF</th><th>原始 ALT</th></tr>
+    </thead>
+    <tbody>
+    {% for r in variant.rows %}
+      <tr>
+        <td>{{ r.sample }}</td>
+        <td class="mono">{{ r.gt }}</td>
+        <td>{{ r.orig_pos }}</td>
+        <td class="mono">{{ r.orig_ref }}</td>
+        <td class="mono">{{ r.orig_alt }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
