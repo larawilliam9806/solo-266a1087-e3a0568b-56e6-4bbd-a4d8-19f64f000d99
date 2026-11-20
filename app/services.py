@@ -7,6 +7,7 @@ import sqlite3
 from .db import read_tx, write_tx
 from .normalization import (
     MAX_NAME_LEN,
+    BoundaryIndex,
     ValidationError,
     parse_reference,
     parse_tsv,
@@ -37,9 +38,15 @@ def upload_reference(raw: bytes) -> dict:
         )
         new_ref_id = cur.lastrowid
 
+        # 边界索引只在本次重验中有效：所有样本共用同一份 run 边界，
+        # 多个样本在同一段连续相同碱基中增减一个同类碱基时（即使锚点
+        # 不同）边界查找结果共享，事务结束即随局部变量丢弃。
+        boundary = BoundaryIndex(sequence)
         revalidated, failed = [], []
         for row in old_samples:
-            outcome = _revalidate_sample(conn, row["id"], new_ref_id, sequence)
+            outcome = _revalidate_sample(
+                conn, row["id"], new_ref_id, sequence, boundary
+            )
             (revalidated if outcome else failed).append(
                 conn.execute(
                     "SELECT name, status, error FROM samples WHERE id=?",
@@ -103,15 +110,22 @@ def delete_sample(sample_id: int) -> None:
 
 
 def _revalidate_sample(
-    conn: sqlite3.Connection, sample_id: int, ref_id: int, ref_seq: str
+    conn: sqlite3.Connection,
+    sample_id: int,
+    ref_id: int,
+    ref_seq: str,
+    boundary: BoundaryIndex,
 ) -> bool:
-    """按给定参考重新校验一个样本，返回是否通过。"""
+    """按给定参考重新校验一个样本，返回是否通过。
+
+    ``boundary`` 为本次重验所有样本共用的参考边界索引（仅本次有效）。
+    """
     row = conn.execute(
         "SELECT raw_tsv FROM samples WHERE id=?", (sample_id,)
     ).fetchone()
     try:
         rows = parse_tsv(row["raw_tsv"])
-        variants = validate_and_normalize(rows, ref_seq)
+        variants = validate_and_normalize(rows, ref_seq, boundary)
     except ValidationError as exc:
         conn.execute("DELETE FROM sample_variants WHERE sample_id=?", (sample_id,))
         conn.execute(

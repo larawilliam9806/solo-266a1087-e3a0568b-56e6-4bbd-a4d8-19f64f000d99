@@ -209,6 +209,34 @@ class FullWorkflowTest(AppTestBase):
         row = self.db_query("SELECT status FROM samples WHERE name='S2'")[0]
         self.assertEqual(row["status"], "VALID")
 
+    def test_revalidation_shares_boundary_across_samples(self):
+        # 长均聚 run：多个样本在同一段连续 C 中不同锚点插入一个 C，
+        # 换参考重验时共用同一份边界索引，且都快速归一化到同一规范变异
+        n = 200_000
+        old_ref = ("C" * n + "AGT").encode()
+        self.upload_ref(old_ref)
+        self.upload_sample("S1", tsv(f"{n}\tC\tCC\t0/1\n"))
+        self.upload_sample("S2", tsv(f"{n // 2}\tC\tCC\t1/1\n"))
+        self.upload_sample("S3", tsv(f"{n // 4}\tC\tCC\t0/1\n"))
+
+        import time
+        start = time.perf_counter()
+        resp = self.upload_ref(("C" * n + "AGTG").encode())
+        self.assertLess(time.perf_counter() - start, 5.0)
+        self.assertIn("参考已更新", resp.get_data(as_text=True))
+
+        # 三个样本重验后仍有效，且归一化到同一个规范变异 (1,C,CC)，
+        # 详情保留各自原始位点与 GT
+        summary = self.dashboard_map()
+        self.assertEqual(summary[(1, "C", "CC")], 3)
+        detail = self.client.get("/variants/1/C>CC").get_data(as_text=True)
+        self.assertIn("S1", detail)
+        self.assertIn("S2", detail)
+        self.assertIn("S3", detail)
+        self.assertIn(f">{n}<", detail)
+        self.assertIn(f">{n // 2}<", detail)
+        self.assertIn(f">{n // 4}<", detail)
+
     def test_summary_only_counts_current_reference(self):
         self.upload_sample("S1", tsv("1\tG\tC\t0/1\n"))
         self.upload_sample("S2", tsv("1\tG\tC\t1/1\n"))

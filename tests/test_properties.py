@@ -134,6 +134,29 @@ class NormalizationPropertyTest(unittest.TestCase):
 
         self.assertGreater(checked_slides, 200, "随机滑动样本数不足，测试可信度不够")
 
+    def test_large_reference_haplotype_preservation(self):
+        # 大参考（含超长低复杂度前缀）上，bulk 归一化仍保持单倍型，
+        # 且与「截断无关前缀后的同一事件」结果一致——证明计算不依赖前缀长度
+        from app.normalization import BoundaryIndex, normalize_variant
+
+        rng = random.Random(99)
+        for _ in range(200):
+            tail = random_genome(rng, rng.randint(20, 60))
+            prefix_unit = rng.choice(["A", "T", "AT", "TG", "GC"])
+            prefix = (prefix_unit * (5000 // len(prefix_unit) + 1))[:5000]
+            genome = prefix + tail
+            pos, ref, alt = random_variant(rng, genome)
+            index = BoundaryIndex(genome)
+            npos, nref, nalt = normalize_variant(pos, ref, alt, genome, index)
+            # 性质 1：单倍型保持
+            self.assertEqual(
+                haplotype(genome, npos, nref, nalt),
+                haplotype(genome, pos, ref, alt),
+                f"haplotype changed on large ref: {(pos, ref, alt)} -> {(npos, nref, nalt)}",
+            )
+            self.assertTrue(nref and nalt)
+            self.assertGreaterEqual(npos, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

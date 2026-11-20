@@ -1,8 +1,10 @@
 """归一化算法单元测试（标准库 unittest，无 Flask 依赖）。"""
 
+import time
 import unittest
 
 from app.normalization import (
+    BoundaryIndex,
     ValidationError,
     normalize_variant,
     parse_reference,
@@ -277,6 +279,79 @@ class BatchValidationTest(unittest.TestCase):
         ]
         with self.assertRaises(ValidationError):
             validate_and_normalize(rows, self.GENOME)
+
+
+class PrefixIndependenceTest(unittest.TestCase):
+    """单条 indel 的计算量不能随无关参考前缀的长度增长。"""
+
+    def test_reported_case_is_fast(self):
+        # 50 万个 C 后接 AGT；(500001, A, AT) 与无关的 C 前缀无任何滑动关系
+        genome = "C" * 500_000 + "AGT"
+        index = BoundaryIndex(genome)
+        start = time.perf_counter()
+        result = normalize_variant(500_001, "A", "AT", genome, index)
+        elapsed = time.perf_counter() - start
+        self.assertEqual(result, (500_001, "A", "AT"))
+        # 朴素逐位实现在此场景需要 30s 以上；bulk 实现应在毫秒级
+        self.assertLess(elapsed, 1.0)
+
+    def test_runtime_does_not_grow_with_unrelated_prefix(self):
+        # 同一「锚点左侧不匹配、无需滑动」的事件，放在不同长度的无关前缀后，
+        # 耗时应基本恒定（取多轮中位数，避免调度抖动）
+        def median_ms(prefix_len):
+            genome = "C" * prefix_len + "AGT"
+            index = BoundaryIndex(genome)
+            samples = []
+            for _ in range(5):
+                t0 = time.perf_counter()
+                normalize_variant(prefix_len + 1, "A", "AT", genome, index)
+                samples.append(time.perf_counter() - t0)
+            samples.sort()
+            return samples[2]
+
+        small = median_ms(1_000)
+        large = median_ms(200_000)
+        # 允许少量常数/缓存噪声，但不应有两个数量级的增长
+        self.assertLess(large, max(small * 50, 0.05))
+
+    def test_deep_homopolymer_run_uses_boundary(self):
+        # 事件确实需要穿过整段 50 万 C 的 run：结果正确且不依赖逐位扫描
+        genome = "C" * 500_000 + "AGT"
+        index = BoundaryIndex(genome)
+        start = time.perf_counter()
+        result = normalize_variant(500_000, "C", "CC", genome, index)
+        elapsed = time.perf_counter() - start
+        self.assertEqual(result, (1, "C", "CC"))
+        self.assertLess(elapsed, 1.0)
+
+    def test_shared_index_equivalent_to_per_call_index(self):
+        # 同一份参考上，共用 BoundaryIndex 与每次新建索引结果完全一致
+        genome = "GCTTTGCACGT" * 100
+        shared = BoundaryIndex(genome)
+        cases = [
+            (3, "T", "TT"), (5, "T", "TT"), (3, "TT", "T"),
+            (8, "A", "C"), (11, "G", "GC"), (20, "TT", "T"),
+        ]
+        for pos, ref, alt in cases:
+            if pos + len(ref) - 1 > len(genome):
+                continue
+            self.assertEqual(
+                normalize_variant(pos, ref, alt, genome, shared),
+                normalize_variant(pos, ref, alt, genome),
+            )
+
+    def test_same_run_different_anchors_share_boundary_lookup(self):
+        # 同一段连续相同碱基中、不同锚点的同类单碱基事件，归一化到同一规范变异
+        genome = "C" * 1000 + "AGT"
+        index = BoundaryIndex(genome)
+        results = {
+            normalize_variant(p, "C", "CC", genome, index)
+            for p in (100, 200, 500, 900)
+        }
+        self.assertEqual(results, {(1, "C", "CC")})
+        # 不同锚点的边界查找都解析到同一条 run（起点 0），且结果被记忆
+        self.assertTrue(index._run_cache)
+        self.assertTrue(all(start == 0 for start in index._run_cache.values()))
 
 
 if __name__ == "__main__":
